@@ -142,6 +142,23 @@ HTML_HEADER = unlines([
     '      .nc-color-9 {',
     '        color: darkblue;',
     '      }',
+    '      .nc-color-system {',
+    '        color: black;',
+    '      }',
+    '      .nc-prefix-owner {',
+    '        color: red;',
+    '      }',
+    '      .nc-prefix-op {',
+    '        color: limegreen;',
+    '      }',
+    '      .nc-prefix-halfop {',
+    '        color: darkmagenta;',
+    '      }',
+    '      .nc-prefix-voice {',
+    '        color: orange;',
+    '      }',
+    '      .nc-prefix-none {',
+    '      }',
     '    </style>',
     '  </head>',
     '  <html>',
@@ -214,23 +231,65 @@ def renderHtml(lines):
              .replace('>', '&gt;')
         return s
 
-    def formatRow(time, prefix, line):
+    NONHUMAN_PREFIXES = [escape(x) for x in ['--', '-->', '<--', '=!=', '']]
+
+    def hashNick(nick):
+        return sum([ord(c) for c in nick]) % 10
+
+    def nickColor(prefix):
+        if prefix in NONHUMAN_PREFIXES:
+            return 'system'
+        return str(hashNick(prefix))
+
+    def nickPrefixColor(nickPrefix):
+        try:
+            return {
+                '!': 'owner',
+                '@': 'op',
+                '%': 'halfop',
+                '~': 'owner',  # Depends on the IRC server used
+                '+': 'voice',
+            }[nickPrefix]
+        except KeyError:
+            return 'none'
+
+    def isLineContinuation(prefix, lastPrefix):
+        if prefix not in NONHUMAN_PREFIXES and prefix == lastPrefix:
+            return True
+        return False
+
+    def formatRow(time, prefix, line, lastPrefix=None):
         # FIXME nicer display.
         def nonhuman(prefix):
-            return prefix in ['--', '<--', '-->']
+            return prefix in NONHUMAN_PREFIXES
+
+        def splitPrefix(prefix):
+            if nonhuman(prefix):
+                return '', prefix
+            if prefix and prefix[0] in ['!', '@', '~', '%', '+']:
+                return prefix[0], prefix[1:]
+            return '', prefix
+
+        nickPrefix, nick = splitPrefix(prefix)
+        lineContinuation = isLineContinuation(prefix, lastPrefix)
 
         return ('    <tr{}>'
                 + '<td>{}</td>'
-                + '<td>{}</td>'
+                + '<td class="nc-color-{}">'
+                + '<span class="nc-prefix-{}">{}</span>{}</td>'
                 + '<td>{}</td>'
                 + '</tr>\n').format(
                     ' class="non-human"' if nonhuman(prefix) else '',
-                    escape(time),
-                    escape(prefix),
-                    escape(line))
+                    time,
+                    nickColor(nick),
+                    nickPrefixColor(nickPrefix),
+                    '' if lineContinuation else nickPrefix,
+                    '↳' if lineContinuation else nick,
+                    line)
 
     formatted = ""
     prevDate = datetime.fromtimestamp(0)
+    lastPrefix = ""
 
     for line in lines:
         cDate = datetime.fromtimestamp(line.timestamp)
@@ -238,10 +297,12 @@ def renderHtml(lines):
             formatted += "{}    <h3>{}</h3>\n    <table>\n".format(
                 "</table>\n" if formatted != "" else "",  # first iteration
                 cDate.date().isoformat())
-        formatted += formatRow(cDate.time().isoformat(),
-                               line.prefix,
-                               line.line)
+        formatted += formatRow(escape(cDate.time().isoformat()),
+                               escape(line.prefix),
+                               escape(line.line),
+                               escape(lastPrefix))
         prevDate = cDate
+        lastPrefix = line.prefix
 
     formatted += "    </table>\n"
     return HTML_HEADER + formatted + HTML_FOOTER
