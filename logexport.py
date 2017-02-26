@@ -28,6 +28,8 @@ from datetime import timedelta
 from datetime import date
 from datetime import time as dtime
 from datetime import datetime
+from collections import namedtuple
+import os.path
 
 SCRIPT_NAME = "logexport"
 SCRIPT_AUTHOR = "Théophile 'tobast' Bastian <contact@tobast.fr>"
@@ -35,10 +37,17 @@ SCRIPT_VERSION = "0.1"
 SCRIPT_LICENSE = "GPL3"
 SCRIPT_DESC = "Export part of a buffer to a nicely formatted HTML file"
 SCRIPT_COMMAND = SCRIPT_NAME
+SCRIPT_OPTIONS_DEFAULT = {
+    'export_path':      '',
+}
 
 
 weechat.register(SCRIPT_NAME, SCRIPT_AUTHOR, SCRIPT_VERSION, SCRIPT_LICENSE,
                  SCRIPT_DESC, "", "")
+
+for option, default_value in SCRIPT_OPTIONS_DEFAULT.items():
+    if not weechat.config_is_set_plugin(option):
+        weechat.config_set_plugin(option, default_value)
 
 weechat.hook_command(
     SCRIPT_COMMAND,
@@ -58,6 +67,94 @@ weechat.hook_command(
     "")
 
 
+''' ####### HTML ######## '''
+
+""" Disclaimer:
+    Most of this HTML code comes from
+    <https://github.com/nguyentito/weechat-log-to-html> by Nguyễn Lê Thành Dũng
+    released under MIT license.
+"""
+
+
+def unlines(lines):
+    out = ""
+    for line in lines:
+        out += line + '\n'
+    return out
+
+
+HTML_HEADER = unlines([
+    '<!DOCTYPE html>',
+    '<html>',
+    '  <head>',
+    '    <meta charset="UTF-8" />',
+    '    <title>IRC log</title>',
+    '    <style media="screen" type="text/css">',
+    '      body {',
+    '        font-family: monospace;',
+    '      }',
+    '      tr:nth-child(2n+1) {',
+    '        background-color: #eeeeee;',
+    '      }',
+    '      .non-human {',
+    '        color: #505050;',
+    '      }',
+    '      .non-human td:nth-child(3) {',
+    '        font-style: italic;',
+    '      }',
+    '      td {',
+    '        padding: 3px 10px;',
+    '      }',
+    '      td:nth-child(2) {',
+    '        font-weight: bold;',
+    '        text-align: right;',
+    '      }',
+    '      table {',
+    '        border-collapse: collapse;',
+    '      }',
+    '',
+    '      .nc-color-0 {',
+    '        color: darkcyan;',
+    '      }',
+    '      .nc-color-1 {',
+    '        color: darkmagenta;',
+    '      }',
+    '      .nc-color-2 {',
+    '        color: darkgreen;',
+    '      }',
+    '      .nc-color-3 {',
+    '        color: brown;',
+    '      }',
+    '      .nc-color-4 {',
+    '        color: blue;',
+    '      }',
+    '      .nc-color-5 {',
+    '      }',
+    '      .nc-color-6 {',
+    '        color: mediumturquoise;',
+    '      }',
+    '      .nc-color-7 {',
+    '        color: magenta;',
+    '      }',
+    '      .nc-color-8 {',
+    '        color: limegreen;',
+    '      }',
+    '      .nc-color-9 {',
+    '        color: darkblue;',
+    '      }',
+    '    </style>',
+    '  </head>',
+    '  <html>',
+    ])
+
+HTML_FOOTER = unlines([
+    '  </body>',
+    '</html>',
+    ])
+
+''' ### END HTML ################ Here begins the actual code ####### '''
+
+
 def logError(err):
     weechat.prnt('', '=!=\t{} error: {}'.format(SCRIPT_NAME, err))
 
@@ -65,6 +162,9 @@ def logError(err):
 class BadlyFormattedTime(Exception):
     def __init__(self, s):
         Exception.__init__(self, "badly formatted time: '{}'".format(s))
+
+
+LogLine = namedtuple('LogLine', ['timestamp', 'prefix', 'line'])
 
 
 def timestampOfString(timestr):
@@ -89,6 +189,71 @@ def timestampOfString(timestr):
         # described time is yesterday
         reqDatetime -= timedelta(days=1)
     return time.mktime(reqDatetime.timetuple())
+
+
+def formatFilePath(name):
+    """ Transforms a log name into a log path, according to the config """
+    PATH_OPTION = 'export_path'
+    if not weechat.config_is_set_plugin(PATH_OPTION):
+        raise Exception(("{} is not set, I don't know where to save "
+                        + "your log file! :c").format(PATH_OPTION))
+    outdir = weechat.config_get_plugin(PATH_OPTION)
+    if not outdir:
+        raise Exception(("{} is not set, I don't know where to save "
+                        + "your log file! :c").format(PATH_OPTION))
+    return os.path.normpath(os.path.expanduser(
+        "{}/{}.html".format(outdir, name)))
+
+
+def renderHtml(lines):
+    """ Formats the given log <lines> into a HTML string. """
+    def escape(s):
+        s = weechat.string_remove_color(s, '')
+        s = s.replace('&', '&amp;') \
+             .replace('<', '&lt;') \
+             .replace('>', '&gt;')
+        return s
+
+    def formatRow(time, prefix, line):
+        # FIXME nicer display.
+        def nonhuman(prefix):
+            return prefix in ['--', '<--', '-->']
+
+        return ('    <tr{}>'
+                + '<td>{}</td>'
+                + '<td>{}</td>'
+                + '<td>{}</td>'
+                + '</tr>\n').format(
+                    ' class="non-human"' if nonhuman(prefix) else '',
+                    escape(time),
+                    escape(prefix),
+                    escape(line))
+
+    formatted = ""
+    prevDate = datetime.fromtimestamp(0)
+
+    for line in lines:
+        cDate = datetime.fromtimestamp(line.timestamp)
+        if cDate.date() != prevDate.date():
+            formatted += "{}    <h3>{}</h3>\n    <table>\n".format(
+                "</table>\n" if formatted != "" else "",  # first iteration
+                cDate.date().isoformat())
+        formatted += formatRow(cDate.time().isoformat(),
+                               line.prefix,
+                               line.line)
+        prevDate = cDate
+
+    formatted += "    </table>\n"
+    return HTML_HEADER + formatted + HTML_FOOTER
+
+
+def writeFile(content, path):
+    """ Writes <content> to <path>, performing a few sanity checks. """
+    if os.path.exists(path):
+        raise Exception("File {} already exists.".format(path))
+
+    with open(path, 'w') as handle:
+        handle.write(content)
 
 
 def catchWeechatFail(f):
@@ -119,7 +284,7 @@ def logexport_export_cmd(buff, args):
     else:
         end_time = timestampOfString(args[1])
 
-    outfile = args[-1]
+    outfile = formatFilePath(args[-1])
 
     cLine = weechat.hdata_pointer(weechat.hdata_get('lines'),
                                   lines, 'last_line')
@@ -137,12 +302,12 @@ def logexport_export_cmd(buff, args):
             if timestamp < start_time:
                 break
             if timestamp <= end_time:
-                gathered.append((timestamp, prefix, msg))
+                gathered.append(LogLine(timestamp, prefix, msg))
 
         cLine = weechat.hdata_pointer(hdata_line, cLine, 'prev_line')
 
-    for (ts, prefix, msg) in gathered[::-1]:
-        weechat.prnt('', '<{}> <{}> <{}>'.format(ts, prefix, msg))
+    html = renderHtml(gathered[::-1])
+    writeFile(html, outfile)
 
 
 def logexport_cmd(data, buff, rawArgs):
