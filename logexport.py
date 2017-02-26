@@ -30,6 +30,7 @@ from datetime import time as dtime
 from datetime import datetime
 from collections import namedtuple
 import os.path
+import re
 
 SCRIPT_NAME = "logexport"
 SCRIPT_AUTHOR = "Théophile 'tobast' Bastian <contact@tobast.fr>"
@@ -40,6 +41,7 @@ SCRIPT_COMMAND = SCRIPT_NAME
 SCRIPT_OPTIONS_DEFAULT = {
     'export_path':      '',
 }
+SCRIPT_OPTIONS_PREFIX = 'plugins.var.python.{}.'.format(SCRIPT_NAME)
 
 
 weechat.register(SCRIPT_NAME, SCRIPT_AUTHOR, SCRIPT_VERSION, SCRIPT_LICENSE,
@@ -210,16 +212,30 @@ def timestampOfString(timestr):
 
 def formatFilePath(name):
     """ Transforms a log name into a log path, according to the config """
+    def raise_unset():
+        raise Exception(("{} is not set, I don't know where to save "
+                        + "your log file! :c").format(
+                            SCRIPT_OPTIONS_PREFIX + PATH_OPTION))
     PATH_OPTION = 'export_path'
     if not weechat.config_is_set_plugin(PATH_OPTION):
-        raise Exception(("{} is not set, I don't know where to save "
-                        + "your log file! :c").format(PATH_OPTION))
+        raise_unset()  # exits
     outdir = weechat.config_get_plugin(PATH_OPTION)
     if not outdir:
-        raise Exception(("{} is not set, I don't know where to save "
-                        + "your log file! :c").format(PATH_OPTION))
+        raise_unset()  # exits
     return os.path.normpath(os.path.expanduser(
         "{}/{}.html".format(outdir, name)))
+
+
+def enhanceMessageLine(msg):
+    """ Applies various enhancements to <msg>, such as transforming URLs into
+    clickable links """
+
+    # This regex was originally taken from http://stackoverflow.com/a/3809435
+    # (but then modified a lot)
+    URL_REGEX = re.compile(r"(\bhttps?://[-a-zA-Z0-9@:%._+~#=?&/]{2,}\b)")
+    msg = re.sub(URL_REGEX, r'<a href="\1">\1</a>', msg)
+
+    return msg
 
 
 def renderHtml(lines):
@@ -259,7 +275,6 @@ def renderHtml(lines):
         return False
 
     def formatRow(time, prefix, line, lastPrefix=None):
-        # FIXME nicer display.
         def nonhuman(prefix):
             return prefix in NONHUMAN_PREFIXES
 
@@ -285,7 +300,7 @@ def renderHtml(lines):
                     nickPrefixColor(nickPrefix),
                     '' if lineContinuation else nickPrefix,
                     '↳' if lineContinuation else nick,
-                    line)
+                    enhanceMessageLine(line))
 
     formatted = ""
     prevDate = datetime.fromtimestamp(0)
