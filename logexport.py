@@ -163,7 +163,7 @@ HTML_HEADER = unlines([
     '      }',
     '    </style>',
     '  </head>',
-    '  <html>',
+    '  <body>',
     ])
 
 HTML_FOOTER = unlines([
