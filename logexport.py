@@ -40,7 +40,7 @@ SCRIPT_DESC = "Export part of a buffer to a nicely formatted HTML file"
 SCRIPT_COMMAND = SCRIPT_NAME
 SCRIPT_OPTIONS_DEFAULT = {
     'export_path':      '',
-    'dark_theme':       'yes',
+    'dark_theme':       'on',
 }
 SCRIPT_OPTIONS_PREFIX = 'plugins.var.python.{}.'.format(SCRIPT_NAME)
 
@@ -80,6 +80,10 @@ weechat.hook_command(
 
 
 def wrapInHtml(wrapped):
+    ''' Wraps the return value of `wrapped` in a HTML context (with CSS) '''
+
+    DARKMODE_OPTION = 'dark_theme'
+
     def mkColorCSS(name, color):
         ''' Converts a `name` and `rgb` (any CSS format) to a few CSS lines '''
         return '.color-{} {{\n\tcolor: {}\n}}\n'.format(name, color)
@@ -103,16 +107,7 @@ def wrapInHtml(wrapped):
         'gray': 'LightSlateGrey',
     }
 
-    CSS = '''
-          body {
-            font-family: monospace;
-          }
-          tr:nth-child(2n+1) {
-            background-color: #eeeeee;
-          }
-          .non-human {
-            color: #505050;
-          }
+    CSS_BASE = '''
           .non-human td:nth-child(3) {
             font-style: italic;
           }
@@ -127,9 +122,6 @@ def wrapInHtml(wrapped):
             border-collapse: collapse;
           }
 
-          .nc-color-system {
-            color: black;
-          }
           .nc-prefix-owner {
             color: red;
           }
@@ -143,11 +135,10 @@ def wrapInHtml(wrapped):
             color: orange;
           }
           .nc-prefix-none {
-          }
-    '''
+          } '''
 
     for color in CSS_COLORS:
-        CSS += mkColorCSS(color, CSS_COLORS[color])
+        CSS_BASE += mkColorCSS(color, CSS_COLORS[color])
 
     HTML_HEADER = '''<!DOCTYPE html>
     <html>
@@ -155,7 +146,7 @@ def wrapInHtml(wrapped):
         <meta charset="UTF-8" />
         <title>IRC log</title>
         <style media="screen" type="text/css">
-    ''' + CSS + '''
+          {css}
         </style>
       </head>
       <body>
@@ -164,8 +155,43 @@ def wrapInHtml(wrapped):
     HTML_FOOTER = '  </body>\n</html>'
 
     def wrapper(*args, **kwargs):
+        if not weechat.config_is_set_plugin(DARKMODE_OPTION):
+            raise (Exception
+                   ("Option {} is not set. Set it to 'yes' or 'no'.".format(
+                       SCRIPT_OPTIONS_PREFIX + DARKMODE_OPTION)))
+        isDark = weechat.config_get_plugin(DARKMODE_OPTION) == 'on'
+        bgColor = '#050505' if isDark else '#fafafa'
+        fgColor = '#aaa' if isDark else '#555'
+        defaultNickColor = CSS_COLORS['white' if isDark else 'black']
+        dimmedLineColor = '#222222' if isDark else '#eeeeee'
+        nonhumanColor = '#666' if isDark else '#505050'
+
+        formattedCss = '''
+          body {{
+            font-family: monospace;
+            background-color: {bgcolor};
+            color: {fgcolor};
+          }}
+          .color-default {{
+            color: {defaultNickColor};
+          }}
+          tr:nth-child(2n+1) {{
+            background-color: {dimmedLineColor};
+          }}
+          .non-human {{
+            color: {nonhumanColor};
+          }}
+        '''.format(
+            bgcolor=bgColor,
+            fgcolor=fgColor,
+            defaultNickColor=defaultNickColor,
+            dimmedLineColor=dimmedLineColor,
+            nonhumanColor=nonhumanColor,
+        )
+
         res = wrapped(*args, **kwargs)
-        return HTML_HEADER + res + HTML_FOOTER
+        return (HTML_HEADER.format(css=(CSS_BASE + formattedCss))
+                + res + HTML_FOOTER)
 
     return wrapper
 
@@ -254,7 +280,7 @@ def renderHtml(lines):
 
     def nickColor(prefix):
         if prefix in NONHUMAN_PREFIXES:
-            return 'system'
+            return 'default'
         return str(weechatNickColor(prefix))
 
     def nickPrefixColor(nickPrefix):
