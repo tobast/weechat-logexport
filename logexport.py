@@ -40,6 +40,7 @@ SCRIPT_DESC = "Export part of a buffer to a nicely formatted HTML file"
 SCRIPT_COMMAND = SCRIPT_NAME
 SCRIPT_OPTIONS_DEFAULT = {
     'export_path':      '',
+    'dark_theme':       'yes',
 }
 SCRIPT_OPTIONS_PREFIX = 'plugins.var.python.{}.'.format(SCRIPT_NAME)
 
@@ -72,106 +73,104 @@ weechat.hook_command(
 ''' ####### HTML ######## '''
 
 """ Disclaimer:
-    Most of this HTML code comes from
+    Part of this HTML code comes from
     <https://github.com/nguyentito/weechat-log-to-html> by Nguyễn Lê Thành Dũng
-    released under MIT license.
+    released under MIT license. Thank you @nguyentito :)
 """
 
 
-def unlines(lines):
-    out = ""
-    for line in lines:
-        out += line + '\n'
-    return out
+def wrapInHtml(wrapped):
+    def mkColorCSS(name, color):
+        ''' Converts a `name` and `rgb` (any CSS format) to a few CSS lines '''
+        return '.color-{} {{\n\tcolor: {}\n}}\n'.format(name, color)
+
+    CSS_COLORS = {
+        'white': 'Beige',
+        'black': 'DarkSlateGrey',
+        'blue': 'DarkSlateBlue',
+        'green': 'ForestGreen',
+        'lightred': 'Tomato',
+        'red': 'Crimson',
+        'magenta': 'MediumVioletRed',
+        'brown': 'Chocolate',
+        'yellow': 'GoldenRod',
+        'lightgreen': 'LightGreen',
+        'cyan': 'LightSeaGreen',
+        'lightcyan': 'LightSkyBlue',
+        'lightblue': 'RoyalBlue',
+        'lightmagenta': 'HotPink',
+        'darkgray': 'DimGrey',
+        'gray': 'LightSlateGrey',
+    }
+
+    CSS = '''
+          body {
+            font-family: monospace;
+          }
+          tr:nth-child(2n+1) {
+            background-color: #eeeeee;
+          }
+          .non-human {
+            color: #505050;
+          }
+          .non-human td:nth-child(3) {
+            font-style: italic;
+          }
+          td {
+            padding: 3px 10px;
+          }
+          td:nth-child(2) {
+            font-weight: bold;
+            text-align: right;
+          }
+          table {
+            border-collapse: collapse;
+          }
+
+          .nc-color-system {
+            color: black;
+          }
+          .nc-prefix-owner {
+            color: red;
+          }
+          .nc-prefix-op {
+            color: limegreen;
+          }
+          .nc-prefix-halfop {
+            color: darkmagenta;
+          }
+          .nc-prefix-voice {
+            color: orange;
+          }
+          .nc-prefix-none {
+          }
+    '''
+
+    for color in CSS_COLORS:
+        CSS += mkColorCSS(color, CSS_COLORS[color])
+
+    HTML_HEADER = '''<!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="UTF-8" />
+        <title>IRC log</title>
+        <style media="screen" type="text/css">
+    ''' + CSS + '''
+        </style>
+      </head>
+      <body>
+    '''
+
+    HTML_FOOTER = '  </body>\n</html>'
+
+    def wrapper(*args, **kwargs):
+        res = wrapped(*args, **kwargs)
+        return HTML_HEADER + res + HTML_FOOTER
+
+    return wrapper
 
 
-HTML_HEADER = unlines([
-    '<!DOCTYPE html>',
-    '<html>',
-    '  <head>',
-    '    <meta charset="UTF-8" />',
-    '    <title>IRC log</title>',
-    '    <style media="screen" type="text/css">',
-    '      body {',
-    '        font-family: monospace;',
-    '      }',
-    '      tr:nth-child(2n+1) {',
-    '        background-color: #eeeeee;',
-    '      }',
-    '      .non-human {',
-    '        color: #505050;',
-    '      }',
-    '      .non-human td:nth-child(3) {',
-    '        font-style: italic;',
-    '      }',
-    '      td {',
-    '        padding: 3px 10px;',
-    '      }',
-    '      td:nth-child(2) {',
-    '        font-weight: bold;',
-    '        text-align: right;',
-    '      }',
-    '      table {',
-    '        border-collapse: collapse;',
-    '      }',
-    '',
-    '      .nc-color-0 {',
-    '        color: darkcyan;',
-    '      }',
-    '      .nc-color-1 {',
-    '        color: darkmagenta;',
-    '      }',
-    '      .nc-color-2 {',
-    '        color: darkgreen;',
-    '      }',
-    '      .nc-color-3 {',
-    '        color: brown;',
-    '      }',
-    '      .nc-color-4 {',
-    '        color: blue;',
-    '      }',
-    '      .nc-color-5 {',
-    '      }',
-    '      .nc-color-6 {',
-    '        color: mediumturquoise;',
-    '      }',
-    '      .nc-color-7 {',
-    '        color: magenta;',
-    '      }',
-    '      .nc-color-8 {',
-    '        color: limegreen;',
-    '      }',
-    '      .nc-color-9 {',
-    '        color: darkblue;',
-    '      }',
-    '      .nc-color-system {',
-    '        color: black;',
-    '      }',
-    '      .nc-prefix-owner {',
-    '        color: red;',
-    '      }',
-    '      .nc-prefix-op {',
-    '        color: limegreen;',
-    '      }',
-    '      .nc-prefix-halfop {',
-    '        color: darkmagenta;',
-    '      }',
-    '      .nc-prefix-voice {',
-    '        color: orange;',
-    '      }',
-    '      .nc-prefix-none {',
-    '      }',
-    '    </style>',
-    '  </head>',
-    '  <body>',
-    ])
-
-HTML_FOOTER = unlines([
-    '  </body>',
-    '</html>',
-    ])
-
-''' ### END HTML ################ Here begins the actual code ####### '''
+''' ### END HTML ######## '''
 
 
 def logError(err):
@@ -238,6 +237,7 @@ def enhanceMessageLine(msg):
     return msg
 
 
+@wrapInHtml
 def renderHtml(lines):
     """ Formats the given log <lines> into a HTML string. """
     def escape(s):
@@ -249,13 +249,13 @@ def renderHtml(lines):
 
     NONHUMAN_PREFIXES = [escape(x) for x in ['--', '-->', '<--', '=!=', '']]
 
-    def hashNick(nick):
-        return sum([ord(c) for c in nick]) % 10
+    def weechatNickColor(nick):
+        return weechat.info_get('nick_color_name', nick)
 
     def nickColor(prefix):
         if prefix in NONHUMAN_PREFIXES:
             return 'system'
-        return str(hashNick(prefix))
+        return str(weechatNickColor(prefix))
 
     def nickPrefixColor(nickPrefix):
         try:
@@ -290,7 +290,7 @@ def renderHtml(lines):
 
         return ('    <tr{}>'
                 + '<td>{}</td>'
-                + '<td class="nc-color-{}">'
+                + '<td class="color-{}">'
                 + '<span class="nc-prefix-{}">{}</span>{}</td>'
                 + '<td>{}</td>'
                 + '</tr>\n').format(
@@ -320,7 +320,7 @@ def renderHtml(lines):
         lastPrefix = line.prefix
 
     formatted += "    </table>\n"
-    return HTML_HEADER + formatted + HTML_FOOTER
+    return formatted
 
 
 def writeFile(content, path):
