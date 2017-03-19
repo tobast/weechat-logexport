@@ -64,7 +64,10 @@ weechat.hook_command(
     + "\n"
     + "A timestamp is formatted as HH:MM:SS, and refers to the last time the "
     + "described time occured: eg. 12:42:00 refers to today's lunch time if "
-    + "it is now 20:00:00, but to yesterday's if it is 03:00:00.",
+    + "it is now 20:00:00, but to yesterday's if it is 03:00:00.\n"
+    + "In a timestamp, any part but the first can be omitted, and will be "
+    + "implicitly replaced by 0, as in 20:12 for 20:12:00. You can also add "
+    + "a colon to make such an omission explicit, as in 20: for 20:00:00.",
     "export",
     "logexport_cmd",
     "")
@@ -220,8 +223,12 @@ LogLine = namedtuple('LogLine', ['timestamp', 'prefix', 'line'])
 def timestampOfString(timestr):
     """ Converts a timestamp string HH:MM:SS to a weechat timestamp """
     spl = timestr.strip().split(':')
-    if len(spl) != 3:
+    if len(spl) > 3:
         raise BadlyFormattedTime(timestr)
+    if len(spl) > 1 and spl[-1] == '':  # Allow eg. 18: for 6pm
+        spl[-1] = '0'
+    spl += ['0'] * (3 - len(spl))  # Allow 18:42 for 18:42:00
+
     try:
         h, m, s = map(int, spl)
     except ValueError:
