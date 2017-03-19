@@ -124,6 +124,9 @@ def wrapInHtml(wrapped):
           table {
             border-collapse: collapse;
           }
+          a, a:visited {
+            color: #07a;
+          }
 
           .nc-prefix-owner {
             color: red;
