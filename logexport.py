@@ -118,6 +118,9 @@ def wrapInHtml(wrapped):
             font-weight: bold;
             text-align: right;
           }
+          table, td:last-child {
+            width: 100%;
+          }
           table {
             border-collapse: collapse;
           }
@@ -163,7 +166,7 @@ def wrapInHtml(wrapped):
         bgColor = '#050505' if isDark else '#fafafa'
         fgColor = '#aaa' if isDark else '#555'
         defaultNickColor = CSS_COLORS['white' if isDark else 'black']
-        dimmedLineColor = '#222222' if isDark else '#eeeeee'
+        dimmedLineColor = '#151515' if isDark else '#eeeeee'
         nonhumanColor = '#666' if isDark else '#505050'
 
         formattedCss = '''
@@ -251,20 +254,55 @@ def formatFilePath(name):
         "{}/{}.html".format(outdir, name)))
 
 
-def enhanceMessageLine(msg):
+def enhanceMessageLine(msg, regexpReplace):
     """ Applies various enhancements to <msg>, such as transforming URLs into
-    clickable links """
+    clickable links and colorizing nicks.
+    `regexpReplace` must be a list of (regexp, pattern) ready to be fed to
+    `re.sub`. """
 
-    # This regex was originally taken from http://stackoverflow.com/a/3809435
-    # (but then modified a lot)
-    URL_REGEX = re.compile(r"(\bhttps?://[-a-zA-Z0-9@:%._+~#=?&/]{2,}\b)")
-    msg = re.sub(URL_REGEX, r'<a href="\1">\1</a>', msg)
+    def shieldTags(func):
+        def splitAtMatchingTag(msg):
+            opening = 0
+            for pos in range(len(msg)):
+                ch = msg[pos]
+                if ch == '<':
+                    opening += 1
+                elif ch == '>':
+                    opening -= 1
+                    if opening < 0:
+                        return msg[:pos], msg[pos+1:]
+            return '', msg  # No tag closing found
 
-    return msg
+        def decorated(msg):
+            spl = msg.split('<')
+            out = func(spl[0]) if len(spl) > 0 else ''
+            for part in spl[1:]:
+                inTag, afterTag = splitAtMatchingTag(part)
+                out += '<' + inTag + '>' + func(afterTag)
+            return out
+        return decorated
+
+    def clickableUrls(msg):
+        ''' Makes URLs clickable links '''
+        # This regex was originally taken from
+        # http://stackoverflow.com/a/3809435 (but then modified a lot)
+        URL_REGEX = re.compile(r"(\bhttps?://[-a-zA-Z0-9@:%._+~#=?&/]{2,}\b)")
+        return re.sub(URL_REGEX, r'<a href="\1">\1</a>', msg)
+
+    @shieldTags
+    def applyRegexp(msg):
+        ''' Colorizes the nicks in `msg` with their color in weechat '''
+        # There should not be *that* many nicks, so we might as well match
+        # every nick with a different regexp
+        for (regexp, pattern) in regexpReplace:
+            msg = regexp.sub(pattern, msg)
+        return msg
+
+    return applyRegexp(clickableUrls(msg))
 
 
 @wrapInHtml
-def renderHtml(lines):
+def renderHtml(lines, buff):
     """ Formats the given log <lines> into a HTML string. """
     def escape(s):
         s = weechat.string_remove_color(s, '')
@@ -283,6 +321,20 @@ def renderHtml(lines):
             return 'default'
         return str(weechatNickColor(prefix))
 
+    def nicksColorsForBuffer():
+        ''' Returns a dictionary of nicks to match with their color.
+        Thanks colorize_nicks.py for inspiration! '''
+        nicks = {}
+        bufferNicks = weechat.infolist_get('nicklist', buff, '')
+
+        while weechat.infolist_next(bufferNicks):
+            if weechat.infolist_string(bufferNicks, 'type') == 'nick':
+                nick = weechat.infolist_string(bufferNicks, 'name')
+                nicks[nick] = nickColor(nick)
+        weechat.infolist_free(bufferNicks)
+
+        return nicks
+
     def nickPrefixColor(nickPrefix):
         try:
             return {
@@ -299,6 +351,12 @@ def renderHtml(lines):
         if prefix not in NONHUMAN_PREFIXES and prefix == lastPrefix:
             return True
         return False
+
+    colorsForBuffer = nicksColorsForBuffer()
+    colorsRegexForBuffer = [
+        (re.compile(r'\b({})\b'.format(re.escape(nick))),
+         r'<span class="color-{}">\1</span>'.format(colorsForBuffer[nick]))
+        for nick in colorsForBuffer]
 
     def formatRow(time, prefix, line, lastPrefix=None):
         def nonhuman(prefix):
@@ -326,7 +384,7 @@ def renderHtml(lines):
                     nickPrefixColor(nickPrefix),
                     '' if lineContinuation else nickPrefix,
                     '↳' if lineContinuation else nick,
-                    enhanceMessageLine(line))
+                    enhanceMessageLine(line, colorsRegexForBuffer))
 
     formatted = ""
     prevDate = datetime.fromtimestamp(0)
@@ -408,7 +466,7 @@ def logexport_export_cmd(buff, args):
 
         cLine = weechat.hdata_pointer(hdata_line, cLine, 'prev_line')
 
-    html = renderHtml(gathered[::-1])
+    html = renderHtml(gathered[::-1], buff)
     writeFile(html, outfile)
 
 
