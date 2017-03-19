@@ -55,7 +55,7 @@ for option, default_value in SCRIPT_OPTIONS_DEFAULT.items():
 weechat.hook_command(
     SCRIPT_COMMAND,
     "Export the specified buffer part to HTML",
-    "export <start-timestamp> [<end-timestamp>] <filename>",
+    "time[stamp] <start-timestamp> [<end-timestamp>] <filename>",
     "  start-timestamp: timestamp (inclusive) at which the export starts.\n"
     + "    end-timestamp: timestamp (inclusive) at which the export ends. If "
     + "omitted, exports until the buffer's end.\n"
@@ -68,7 +68,7 @@ weechat.hook_command(
     + "In a timestamp, any part but the first can be omitted, and will be "
     + "implicitly replaced by 0, as in 20:12 for 20:12:00. You can also add "
     + "a colon to make such an omission explicit, as in 20: for 20:00:00.",
-    "export",
+    "time|timestamp",
     "logexport_cmd",
     "")
 
@@ -437,24 +437,27 @@ def catchWeechatFail(f):
     return wrap
 
 
-@catchWeechatFail
-def logexport_export_cmd(buff, args):
-    """ Called upon `/logexport export`. Args is already split. """
+class StopExport(Exception):
+    pass
 
-    if len(args) not in [2, 3]:
-        raise Exception("missing or trailing parameters for 'export'.")
+
+@catchWeechatFail
+def logexport_export_cmd(buff, exportFile, mustExportLine):
+    """ Called when an export function is called, as `/logexport time`.
+
+    `exportFile` is the name of the file to which we will export.
+
+    `mustExportLine`, when fed a message line (ie. `timestamp, prefix, msg`),
+    should return `True` iff this line should be included in the export. The
+    lines will be fed one by one starting from the most recent.
+    When all the lines that should be exported have been checked, this function
+    should raise `StopExport` to avoid looping uselessly through all the
+    backlog.
+    """
 
     cBuffer = weechat.hdata_get('buffer')
     lines = weechat.hdata_pointer(cBuffer, buff, 'lines')
     # 'lines' and not 'own_lines': match what the user sees.
-
-    start_time = timestampOfString(args[0])
-    if len(args) == 2:  # No end timestamp provided
-        end_time = time.time()
-    else:
-        end_time = timestampOfString(args[1])
-
-    outfile = formatFilePath(args[-1])
 
     cLine = weechat.hdata_pointer(weechat.hdata_get('lines'),
                                   lines, 'last_line')
@@ -469,22 +472,48 @@ def logexport_export_cmd(buff, args):
             prefix = weechat.hdata_string(hdata_line_data, data, 'prefix')
             msg = weechat.hdata_string(hdata_line_data, data, 'message')
 
-            if timestamp < start_time:
+            try:
+                if mustExportLine(timestamp, prefix, msg):
+                    gathered.append(LogLine(timestamp, prefix, msg))
+            except StopExport:
                 break
-            if timestamp <= end_time:
-                gathered.append(LogLine(timestamp, prefix, msg))
 
         cLine = weechat.hdata_pointer(hdata_line, cLine, 'prev_line')
 
     html = renderHtml(gathered[::-1], buff)
-    writeFile(html, outfile)
+    writeFile(html, exportFile)
+
+
+def exportWithTimes(buff, args):
+    """ Called upon `/logexport time[stamp]` """
+
+    if len(args) not in [2, 3]:
+        raise Exception("missing or trailing parameters for 'time'.")
+
+    start_time = timestampOfString(args[0])
+    if len(args) == 2:  # No end timestamp provided
+        end_time = time.time()
+    else:
+        end_time = timestampOfString(args[1])
+
+    outfile = formatFilePath(args[-1])
+
+    def shouldExport(timestamp, prefix, msg):
+        if timestamp < start_time:
+            raise StopExport
+        if timestamp <= end_time:
+            return True
+        return False
+
+    return logexport_export_cmd(buff, outfile, shouldExport)
 
 
 def logexport_cmd(data, buff, rawArgs):
     """ Command called by weechat upon /logexport """
 
     ACTION_OF_ARG = {
-        'export': logexport_export_cmd,
+        'time': exportWithTimes,
+        'timestamp': exportWithTimes,
     }
 
     args = rawArgs.strip().split()
