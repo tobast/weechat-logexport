@@ -359,13 +359,16 @@ def renderHtml(lines, buff):
 
     NONHUMAN_PREFIXES = [escape(x) for x in ['--', '-->', '<--', '=!=', '']]
 
-    def weechatNickColor(nick):
-        return weechat.info_get('nick_color_name', nick)
+    weechatNickColors = {}
+    for prefix in NONHUMAN_PREFIXES:
+        weechatNickColors[prefix] = 'default'
 
-    def nickColor(prefix):
-        if prefix in NONHUMAN_PREFIXES:
-            return 'default'
-        return str(weechatNickColor(prefix))
+    def nickColor(nick):
+        if nick not in weechatNickColors:
+            color = weechat.info_get('nick_color_name', nick)
+            weechatNickColors[nick] = color
+            return color
+        return weechatNickColors[nick]
 
     def nicksColorsForBuffer():
         ''' Returns a dictionary of nicks to match with their color.
@@ -382,16 +385,13 @@ def renderHtml(lines, buff):
         return nicks
 
     def nickPrefixColor(nickPrefix):
-        try:
-            return {
-                '!': 'owner',
-                '@': 'op',
-                '%': 'halfop',
-                '~': 'owner',  # Depends on the IRC server used
-                '+': 'voice',
-            }[nickPrefix]
-        except KeyError:
-            return 'none'
+        return {
+            '!': 'owner',
+            '@': 'op',
+            '%': 'halfop',
+            '~': 'owner',  # Depends on the IRC server used
+            '+': 'voice',
+        }.get(nickPrefix, 'none')
 
     def isLineContinuation(prefix, lastPrefix):
         if prefix not in NONHUMAN_PREFIXES and prefix == lastPrefix:
