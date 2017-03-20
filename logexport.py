@@ -52,28 +52,64 @@ for option, default_value in SCRIPT_OPTIONS_DEFAULT.items():
     if not weechat.config_is_set_plugin(option):
         weechat.config_set_plugin(option, default_value)
 
-weechat.hook_command(
-    SCRIPT_COMMAND,
-    "Export the specified buffer part to HTML",
-    "time[stamp] <start-timestamp> [<end-timestamp>] <filename>",
-    "  start-timestamp: timestamp (inclusive) at which the export starts.\n"
-    + "    end-timestamp: timestamp (inclusive) at which the export ends. If "
-    + "omitted, exports until the buffer's end.\n"
-    + "         filename: a file name for the export. The exported file path "
-    + "will be '$(logexport.export_path)/$(filename).html'.\n"
-    + "\n"
-    + "A timestamp is formatted as HH:MM:SS, and refers to the last time the "
-    + "described time occured: eg. 12:42:00 refers to today's lunch time if "
-    + "it is now 20:00:00, but to yesterday's if it is 03:00:00.\n"
-    + "In a timestamp, any part but the first can be omitted, and will be "
-    + "implicitly replaced by 0, as in 20:12 for 20:12:00. You can also add "
-    + "a colon to make such an omission explicit, as in 20: for 20:00:00.",
-    "time|timestamp",
-    "logexport_cmd",
-    "")
+
+''' ##### HELP TEXT AND MESSAGES ########################################## '''
 
 
-''' ####### HTML ######## '''
+def unlines(msg):
+    """ Remove singne \n, keep only double \n's """
+    out = ""
+    for pos in range(len(msg)):
+        ch = msg[pos]
+        if ch == '\n' and (pos == 0 or msg[pos-1] != '\n'):
+            continue
+        out += msg[pos]
+    return out
+
+
+HELP_TEXT = unlines("""
+To have more details on a subcommand, please run /logexport help <command> (eg.
+`/logexport help time`).
+""")
+
+ARGS_COMPLETION_TEMPLATE = ("help match|time|timestamp"
+                            " || match"
+                            " || time|timestamp")
+
+HELP_TEXT_TIME = '<start-timestamp> [<end-timestamp>] <filename>', unlines("""
+  start-timestamp: timestamp (inclusive) at which the export starts.\n
+    end-timestamp: timestamp (inclusive) at which the export ends. If omitted,
+ exports until the buffer's end.\n
+         filename: a file name for the export. The exported file path will be
+ '$("""+SCRIPT_OPTIONS_PREFIX+"""export_path)/$(filename).html'.\n
+\n
+A timestamp is formatted as HH:MM:SS, and refers to the last time the described
+ time occured: eg. 12:42:00 refers to today's lunch time if it is now 20:00:00,
+ but to yesterday's if it is 03:00:00.\n In a timestamp, any part but the first
+ can be omitted, and will be implicitly replaced by 0, as in 20:12 for
+ 20:12:00. You can also add a colon to make such an omission explicit, as in
+ 20: for 20:00:00.
+""")
+
+HELP_TEXT_MATCH = '<start-text> [...|… <end-text>] <filename>', unlines("""
+Matches a piece of backlog contained between the latest line containing
+ <end-text> (or the end of the backlog if omitted) and the latest line before
+ this one containing <start-text>, all-inclusive.\n
+\n
+       start-text: a chunk of text (that can contain spaces) to be matched as
+ the beginning of the export.\n
+         end-text: a chunk of text (that can contain spaces) to be matched as
+ the end of the export. Matches until the end if omitted.\n
+         filename: a file name for the export. The exported file path will be
+ '$("""+SCRIPT_OPTIONS_PREFIX+"""export_path)/$(filename).html'.\n
+\n
+Example:\n
+    /logexport match once upon a time ... they lived happily ever after tale\n
+  will match the latest tale posted in this buffer, and export it to the
+ file 'tale.html' in the right directory.
+""")
+
+''' ####### HTML ########################################################## '''
 
 """ Disclaimer:
     Part of this HTML code comes from
@@ -205,7 +241,7 @@ def wrapInHtml(wrapped):
     return wrapper
 
 
-''' ### END HTML ######## '''
+''' ### END HTML ########################################################## '''
 
 
 def logError(err):
@@ -429,7 +465,8 @@ def writeFile(content, path):
 def catchWeechatFail(f):
     def wrap(*args, **kwargs):
         try:
-            f(*args, **kwargs)
+            if f(*args, **kwargs) == weechat.WEECHAT_RC_ERROR:
+                return weechat.WEECHAT_RC_ERROR
             return weechat.WEECHAT_RC_OK
         except Exception as e:
             logError(str(e))
@@ -453,6 +490,9 @@ def logexport_export_cmd(buff, exportFile, mustExportLine):
     When all the lines that should be exported have been checked, this function
     should raise `StopExport` to avoid looping uselessly through all the
     backlog.
+    It is eventually called with `None, None, None` when the top of the backlog
+    is reached, and could raise an exception at this time if something went
+    wrong.
     """
 
     cBuffer = weechat.hdata_get('buffer')
@@ -465,6 +505,7 @@ def logexport_export_cmd(buff, exportFile, mustExportLine):
     hdata_line_data = weechat.hdata_get('line_data')
 
     gathered = []
+    reachedTop = True  # Only False if we `break` at some point
     while cLine:
         data = weechat.hdata_pointer(hdata_line, cLine, 'data')
         if data:
@@ -476,15 +517,21 @@ def logexport_export_cmd(buff, exportFile, mustExportLine):
                 if mustExportLine(timestamp, prefix, msg):
                     gathered.append(LogLine(timestamp, prefix, msg))
             except StopExport:
+                reachedTop = False
                 break
 
         cLine = weechat.hdata_pointer(hdata_line, cLine, 'prev_line')
 
+    if reachedTop:
+        # Give `mustExportLine` the chance to signal something went wrong.
+        mustExportLine(None, None, None)
+
     html = renderHtml(gathered[::-1], buff)
-    writeFile(html, exportFile)
+    writeFile(html, formatFilePath(exportFile))
 
 
-def exportWithTimes(buff, args):
+@catchWeechatFail
+def exportWithTimes(buff, args, rawargs):
     """ Called upon `/logexport time[stamp]` """
 
     if len(args) not in [2, 3]:
@@ -496,9 +543,11 @@ def exportWithTimes(buff, args):
     else:
         end_time = timestampOfString(args[1])
 
-    outfile = formatFilePath(args[-1])
+    outfile = args[-1]
 
     def shouldExport(timestamp, prefix, msg):
+        if (timestamp, prefix, msg) == (None, None, None):
+            return True  # Nothing can go wrong.
         if timestamp < start_time:
             raise StopExport
         if timestamp <= end_time:
@@ -508,12 +557,103 @@ def exportWithTimes(buff, args):
     return logexport_export_cmd(buff, outfile, shouldExport)
 
 
+@catchWeechatFail
+def exportWithTextMatch(buff, args, rawargs):
+    """ Called upon `/logexport match` """
+
+    try:
+        lastspace = rawargs.rfind(' ')
+        outfile = rawargs[lastspace+1:]
+        rawargs = rawargs[:lastspace].strip()
+    except ValueError:
+        raise Exception("Missing parameter(s) for 'match'.")
+
+    def posmin(x, y):
+        return x if (x < y and x >= 0) else y
+
+    delimitersSplitPos = posmin(rawargs.find(' ... '),
+                                rawargs.find(' … '))
+    if delimitersSplitPos >= 0:
+        delimFrom = rawargs[:delimitersSplitPos].strip()
+        toPos = rawargs.find(' ', delimitersSplitPos+1)  # Cannot fail
+        delimTo = rawargs[toPos:].strip()
+    else:
+        delimFrom = rawargs.strip()
+        delimTo = None
+
+    def shouldExport(timestamp, prefix, msg):
+        if (timestamp, prefix, msg) == (None, None, None):
+            # Something went wrong if the range is empty
+            if not shouldExport.endFound:
+                raise Exception('Could not find end "{}" :c'.format(delimTo))
+            if not shouldExport.done:
+                if delimTo is not None:
+                    raise Exception('Could not find beginning "{}" '
+                                    'before "{}" :c'
+                                    .format(delimFrom, delimTo))
+                else:
+                    raise Exception('Could not find beginning "{}" :c'
+                                    .format(delimTo))
+            return True
+
+        if shouldExport.done:
+            raise StopExport
+        if not shouldExport.endFound and delimTo is not None and \
+                msg.find(delimTo) >= 0:
+            shouldExport.endFound = True
+            return True
+        if not shouldExport.endFound:
+            return False
+
+        if msg.find(delimFrom) >= 0:
+            shouldExport.done = True
+        return True
+    shouldExport.endFound = (delimTo is None)
+    shouldExport.done = False
+
+    return logexport_export_cmd(buff, outfile, shouldExport)
+
+
+@catchWeechatFail
+def helpMsg(buff, args, rawargs):
+    """ Displays help about a command """
+    COMMANDS_HELPS = {
+        'time': HELP_TEXT_TIME,
+        'timestamp': HELP_TEXT_TIME,
+        'match': HELP_TEXT_MATCH,
+        'help': 'Aw, such recursion, much wow.',
+    }
+
+    if len(args) == 0 or not args[0] in COMMANDS_HELPS:  # general help
+        weechat.command('', '/help {}'.format(SCRIPT_COMMAND))
+        return
+
+    help_proto, help_text = COMMANDS_HELPS[args[0]]
+    weechat.prnt('', '')  # Skip a line
+    weechat.prnt('', '{}Logexport help: {}{}'.format(
+        weechat.color('*lightgreen'), args[0], weechat.color('default')))
+    weechat.prnt('', '  /logexport {} {}\n\n'.format(args[0], help_proto))
+    weechat.prnt('', help_text)
+
+
+weechat.hook_command(
+    SCRIPT_COMMAND,
+    "Export the specified buffer part to HTML",
+    "time[stamp] ... | match ... | help",
+    HELP_TEXT,
+    ARGS_COMPLETION_TEMPLATE,
+    "logexport_cmd",
+    "")
+
+
 def logexport_cmd(data, buff, rawArgs):
     """ Command called by weechat upon /logexport """
 
     ACTION_OF_ARG = {
         'time': exportWithTimes,
         'timestamp': exportWithTimes,
+        'match': exportWithTextMatch,
+        'help': helpMsg,
     }
 
     args = rawArgs.strip().split()
@@ -521,8 +661,10 @@ def logexport_cmd(data, buff, rawArgs):
         logError("expected at least one argument.")
         return weechat.WEECHAT_RC_ERROR
 
+    nRawArgs = rawArgs[len(args[0]):].strip()
+
     try:
-        return ACTION_OF_ARG[args[0]](buff, args[1:])
+        return ACTION_OF_ARG[args[0]](buff, args[1:], nRawArgs)
     except KeyError:
         logError("unkwown action {}.".format(args[0]))
         return weechat.WEECHAT_RC_ERROR
