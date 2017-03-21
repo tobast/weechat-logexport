@@ -300,7 +300,7 @@ def formatFilePath(name):
         "{}/{}.html".format(outdir, name)))
 
 
-def enhanceMessageLine(msg, regexpReplace):
+def enhanceMessageLine(msg, colorsRegex, nickColors):
     """ Applies various enhancements to <msg>, such as transforming URLs into
     clickable links and colorizing nicks.
     `regexpReplace` must be a list of (regexp, pattern) ready to be fed to
@@ -336,15 +336,19 @@ def enhanceMessageLine(msg, regexpReplace):
         return re.sub(URL_REGEX, r'<a href="\1">\1</a>', msg)
 
     @shieldTags
-    def applyRegexp(msg):
+    def applyColors(msg):
         ''' Colorizes the nicks in `msg` with their color in weechat '''
-        # There should not be *that* many nicks, so we might as well match
-        # every nick with a different regexp
-        for (regexp, pattern) in regexpReplace:
-            msg = regexp.sub(pattern, msg)
-        return msg
+        lastStop = 0  # exclusive
+        curMsg = ''
+        for match in colorsRegex.finditer(msg):
+            curMsg += msg[lastStop:match.start()]
+            lastStop = match.end() + 1
+            nick = match.group(1)
+            curMsg += '<span class="color-{}">{}</span>'.format(
+                nickColors[nick], nick)
+        return curMsg + msg[lastStop:]
 
-    return applyRegexp(clickableUrls(msg))
+    return applyColors(clickableUrls(msg))
 
 
 @wrapInHtml
@@ -399,10 +403,9 @@ def renderHtml(lines, buff):
         return False
 
     colorsForBuffer = nicksColorsForBuffer()
-    colorsRegexForBuffer = [
-        (re.compile(r'\b({})\b'.format(re.escape(nick))),
-         r'<span class="color-{}">\1</span>'.format(colorsForBuffer[nick]))
-        for nick in colorsForBuffer]
+    escapedNicks = map(re.escape, colorsForBuffer.keys())
+    nickStringForRegex = '|'.join(escapedNicks)
+    colorsRegexForBuffer = re.compile(r'\b({})\b'.format(nickStringForRegex))
 
     def formatRow(time, prefix, line, lastPrefix=None):
         def nonhuman(prefix):
@@ -430,7 +433,9 @@ def renderHtml(lines, buff):
                     nickPrefixColor(nickPrefix),
                     '' if lineContinuation else nickPrefix,
                     '↳' if lineContinuation else nick,
-                    enhanceMessageLine(line, colorsRegexForBuffer))
+                    enhanceMessageLine(line,
+                                       colorsRegexForBuffer,
+                                       colorsForBuffer))
 
     formatted = ""
     prevDate = datetime.fromtimestamp(0)
