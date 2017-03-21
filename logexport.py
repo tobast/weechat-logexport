@@ -72,9 +72,10 @@ To have more details on a subcommand, please run /logexport help <command> (eg.
 `/logexport help time`).
 """)
 
-ARGS_COMPLETION_TEMPLATE = ("help match|time|timestamp"
+ARGS_COMPLETION_TEMPLATE = ("help match|time|timestamp|whole"
                             " || match"
-                            " || time|timestamp")
+                            " || time|timestamp"
+                            " || whole")
 
 HELP_TEXT_TIME = '<start-timestamp> [<end-timestamp>] <filename>', unlines("""
   start-timestamp: timestamp (inclusive) at which the export starts.\n
@@ -82,7 +83,7 @@ HELP_TEXT_TIME = '<start-timestamp> [<end-timestamp>] <filename>', unlines("""
  exports until the buffer's end.\n
          filename: a file name for the export. The exported file path will be
  '$("""+SCRIPT_OPTIONS_PREFIX+"""export_path)/$(filename).html'.\n
-\n
+
 A timestamp is formatted as HH:MM:SS, and refers to the last time the described
  time occured: eg. 12:42:00 refers to today's lunch time if it is now 20:00:00,
  but to yesterday's if it is 03:00:00.\n In a timestamp, any part but the first
@@ -95,19 +96,25 @@ HELP_TEXT_MATCH = '<start-text> [...|… <end-text>] <filename>', unlines("""
 Matches a piece of backlog contained between the latest line containing
  <end-text> (or the end of the backlog if omitted) and the latest line before
  this one containing <start-text>, all-inclusive.\n
-\n
+
        start-text: a chunk of text (that can contain spaces) to be matched as
  the beginning of the export.\n
          end-text: a chunk of text (that can contain spaces) to be matched as
  the end of the export. Matches until the end if omitted.\n
          filename: a file name for the export. The exported file path will be
  '$("""+SCRIPT_OPTIONS_PREFIX+"""export_path)/$(filename).html'.\n
-\n
+
 Example:\n
     /logexport match once upon a time ... they lived happily ever after tale\n
   will match the latest tale posted in this buffer, and export it to the
  file 'tale.html' in the right directory.
 """)
+
+HELP_TEXT_WHOLE = '<filename>', unlines("""
+Exports the whole buffer's contents.\n
+
+         filename: a file name for the export. The exported file path will be
+ '$("""+SCRIPT_OPTIONS_PREFIX+"""export_path)/$(filename).html'.""")
 
 ''' ####### HTML ########################################################## '''
 
@@ -620,13 +627,27 @@ def exportWithTextMatch(buff, args, rawargs):
 
 
 @catchWeechatFail
+def exportWithWhole(buff, args, rawargs):
+    ''' Called upon `/logexport whole` '''
+    if len(args) != 1:
+        raise Exception("missing or trailing parameters for 'whole'.")
+    outfile = args[0]
+
+    def shouldExport(timestamp, prefix, msg):
+        return True
+
+    return logexport_export_cmd(buff, outfile, shouldExport)
+
+
+@catchWeechatFail
 def helpMsg(buff, args, rawargs):
     """ Displays help about a command """
     COMMANDS_HELPS = {
         'time': HELP_TEXT_TIME,
         'timestamp': HELP_TEXT_TIME,
         'match': HELP_TEXT_MATCH,
-        'help': 'Aw, such recursion, much wow.',
+        'whole': HELP_TEXT_WHOLE,
+        'help': ('', 'Aw, such recursion, much wow.'),
     }
 
     if len(args) == 0 or not args[0] in COMMANDS_HELPS:  # general help
@@ -644,7 +665,7 @@ def helpMsg(buff, args, rawargs):
 weechat.hook_command(
     SCRIPT_COMMAND,
     "Export the specified buffer part to HTML",
-    "time[stamp] ... | match ... | help",
+    "time[stamp] ... | match ... | whole ... | help",
     HELP_TEXT,
     ARGS_COMPLETION_TEMPLATE,
     "logexport_cmd",
@@ -658,6 +679,7 @@ def logexport_cmd(data, buff, rawArgs):
         'time': exportWithTimes,
         'timestamp': exportWithTimes,
         'match': exportWithTextMatch,
+        'whole': exportWithWhole,
         'help': helpMsg,
     }
 
