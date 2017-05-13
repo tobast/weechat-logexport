@@ -349,7 +349,7 @@ def enhanceMessageLine(msg, colorsRegex, nickColors):
         curMsg = ''
         for match in colorsRegex.finditer(msg):
             curMsg += msg[lastStop:match.start()]
-            lastStop = match.end() + 1
+            lastStop = match.end()
             nick = match.group(1)
             curMsg += '<span class="color-{}">{}</span>'.format(
                 nickColors[nick], nick)
